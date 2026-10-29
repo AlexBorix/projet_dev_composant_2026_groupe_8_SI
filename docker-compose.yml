@@ -1,0 +1,64 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: sales_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: shop
+    ports: ["3307:3306"]
+    volumes:
+      - ./db/mysql_init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpass"]
+      interval: 5s
+      retries: 20
+
+  postgres:
+    image: postgres:16
+    container_name: sales_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespass
+      POSTGRES_DB: warehouse
+    ports: ["5432:5432"]
+    volumes:
+      - ./db/postgres_init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d warehouse"]
+      interval: 5s
+      retries: 20
+
+  dagster:
+    build: .
+    container_name: sales_dagster
+    command: dagster dev -h 0.0.0.0 -p 3000 -m dagster_project.definitions
+    env_file: .env
+    environment:
+      DAGSTER_HOME: /dagster_home
+    ports: ["3000:3000"]
+    # permet d'atteindre Airbyte (abctl) qui tourne sur la machine hote
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ./dagster_project:/app/dagster_project
+      - dagster_home:/dagster_home
+    depends_on:
+      mysql: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+
+  api:
+    build: .
+    container_name: sales_api
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8080 --reload
+    env_file: .env
+    ports: ["8080:8080"]
+    volumes:
+      - ./api:/app/api
+    depends_on:
+      postgres: {condition: service_healthy}
+
+volumes:
+  mysql_data:
+  pg_data:
+  dagster_home:
